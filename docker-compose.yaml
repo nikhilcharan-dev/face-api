@@ -1,0 +1,36 @@
+services:
+  face-recognition-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: workping/face-recognition-api:latest
+    container_name: face-recognition-api
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      MONGODB_URI: "${MONGODB_URI}"
+      MONGODB_DB: "${MONGODB_DB:-workping}"
+      REDIS_HOST: "${REDIS_HOST}"
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    volumes:
+      # InsightFace model cache — avoids re-downloading on every restart
+      - models:/app/models
+      # Drop images here for bulk seeding (seed_bulk.py reads from /app/image_dump)
+      - ./image_dump:/app/image_dump
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  models:

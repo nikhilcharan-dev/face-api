@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+numpy
+opencv-python-headless
+insightface
+onnxruntime
+motor
+redis[hiredis]
