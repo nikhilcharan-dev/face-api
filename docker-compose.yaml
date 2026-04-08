@@ -22,12 +22,7 @@ services:
       # Drop images here for bulk seeding (seed_bulk.py reads from /app/image_dump)
       - ./image_dump:/app/image_dump
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/health')"]
-      interval: 30s
-      timeout: 10s
-      start_period: 90s
-      retries: 3
+
     logging:
       driver: json-file
       options:
