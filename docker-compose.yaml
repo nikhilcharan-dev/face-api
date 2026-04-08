@@ -10,13 +10,13 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       MONGODB_URI: "${MONGODB_URI}"
-      MONGODB_DB: "${MONGODB_DB:-workping}"
+      MONGODB_DB: "${MONGODB_DB}"
       REDIS_HOST: "${REDIS_HOST}"
-      REDIS_PORT: "${REDIS_PORT:-6379}"
+      REDIS_PORT: "${REDIS_PORT}"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
     volumes:
-      # InsightFace model cache — avoids re-downloading on every restart
-      - models:/app/models
+      # Mounts the local models directory straight from the repo so no download is required!
+      - ./models:/app/models
       # Drop images here for bulk seeding (seed_bulk.py reads from /app/image_dump)
       - ./image_dump:/app/image_dump
     restart: unless-stopped
@@ -32,5 +32,3 @@ services:
         max-size: "10m"
         max-file: "3"
 
-volumes:
-  models:
