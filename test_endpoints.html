@@ -255,6 +255,16 @@
                 <input type="text" id="enroll-emp" placeholder="e.g., e_1024" required>
             </div>
 
+            <div class="form-group">
+                <label>Employee Name (Optional)</label>
+                <input type="text" id="enroll-name" placeholder="e.g., John Doe">
+            </div>
+
+            <div class="form-group">
+                <label>Department (Optional)</label>
+                <input type="text" id="enroll-dept" placeholder="e.g., Engineering">
+            </div>
+
             <button id="enroll-btn" onclick="submitEnroll()">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                 Capture & Enroll Face
@@ -389,9 +399,15 @@
             const orgInput = document.querySelector('input#enroll-org');
             /** @type {HTMLInputElement} */
             const empInput = document.querySelector('input#enroll-emp');
+            /** @type {HTMLInputElement} */
+            const nameInput = document.querySelector('input#enroll-name');
+            /** @type {HTMLInputElement} */
+            const deptInput = document.querySelector('input#enroll-dept');
             
             const orgId = orgInput.value.trim();
             const empId = empInput.value.trim();
+            const empName = nameInput.value.trim();
+            const empDept = deptInput.value.trim();
 
             if (!orgId || !empId) return alert("Please fill Organization and Employee IDs.");
 
@@ -405,6 +421,8 @@
                     employee_id: empId,
                     organization_id: orgId
                 };
+                if (empName) payload.employee_name = empName;
+                if (empDept) payload.department = empDept;
 
                 const res = await fetch(`${API_URL}/enroll`, {
                     method: 'POST',

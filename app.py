@@ -25,6 +25,8 @@ class EnrollRequest(BaseModel):
     image_base64: str
     employee_id: str
     organization_id: str
+    employee_name: Optional[str] = None
+    department: Optional[str] = None
 
 class DetectRequest(BaseModel):
     image_base64: str
@@ -159,13 +161,20 @@ async def enroll(req: EnrollRequest):
         raise HTTPException(status_code=422, detail=f"Face extraction failed: {e}")
 
     col = get_embeddings_collection()
+    
+    doc = {
+        "employee_id": req.employee_id,
+        "organization_id": req.organization_id,
+        "embedding": emb.tolist(),
+    }
+    if req.employee_name:
+        doc["employee_name"] = req.employee_name
+    if req.department:
+        doc["department"] = req.department
+
     await col.update_one(
         {"employee_id": req.employee_id},
-        {"$set": {
-            "employee_id": req.employee_id,
-            "organization_id": req.organization_id,
-            "embedding": emb.tolist(),
-        }},
+        {"$set": doc},
         upsert=True,
     )
     await bust_cache(req.organization_id)
@@ -183,7 +192,7 @@ async def detect(req: DetectRequest):
     col = get_embeddings_collection()
     user_doc = await col.find_one(
         {"organization_id": req.organization_id, "employee_id": req.user_id},
-        {"_id": 0, "embedding": 1}
+        {"_id": 0, "embedding": 1, "employee_name": 1, "department": 1}
     )
 
     if not user_doc:
@@ -210,7 +219,9 @@ async def detect(req: DetectRequest):
         success = score >= THRESHOLD
         matched_id = req.user_id if success else "Unknown"
 
-        person = {"id": matched_id, "name": matched_id, "department": "Engineering"} if success else None
+        name = user_doc.get("employee_name", matched_id)
+        department = user_doc.get("department", "Unknown")
+        person = {"id": matched_id, "name": name, "department": department} if success else None
         total_time = (time.time() - start_total) * 1000
 
         entry = stats.add_entry(matched_id, score, total_time, success)
