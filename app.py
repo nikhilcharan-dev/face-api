@@ -28,8 +28,7 @@ class EnrollRequest(BaseModel):
 
 class DetectRequest(BaseModel):
     image_base64: str
-    device_id: str
-    location_id: Optional[str] = "main-entrance"
+    user_id: str
     organization_id: str
 
 class ExtractEmbeddingRequest(BaseModel):
@@ -177,19 +176,20 @@ async def enroll(req: EnrollRequest):
 @app.post("/api/v1/detect")
 async def detect(req: DetectRequest):
     """
-    Recognize a face against all enrolled embeddings for the given organisation.
-    Embeddings are served from Redis (5 min TTL) with MongoDB as the source of truth.
-    Similarity is computed via numpy dot-product on L2-normalised embeddings.
+    Verify a face against a specific enrolled user embedding.
     """
     start_total = time.time()
 
-    records = await load_embeddings(req.organization_id)
+    col = get_embeddings_collection()
+    user_doc = await col.find_one(
+        {"organization_id": req.organization_id, "employee_id": req.user_id},
+        {"_id": 0, "embedding": 1}
+    )
 
-    if not records:
+    if not user_doc:
         return {
             "success": False, "person": None, "confidence": 0.0,
-            "embedding_time_ms": 0.0, "search_time_ms": 0.0, "total_time_ms": 0.0,
-            "attendance": {"status": "unknown", "is_late": False},
+            "error": "User not found"
         }
 
     try:
@@ -203,33 +203,26 @@ async def detect(req: DetectRequest):
         emb_time = (time.time() - start_emb) * 1000
 
         start_search = time.time()
-        emb_matrix = np.array([r["embedding"] for r in records], dtype=np.float32)
-        scores = emb_matrix @ query_emb  # cosine similarity
-        best_idx = int(np.argmax(scores))
-        best_score = float(scores[best_idx])
+        db_emb = np.array(user_doc["embedding"], dtype=np.float32)
+        score = float(np.dot(db_emb, query_emb))
         search_time = (time.time() - start_search) * 1000
 
-        success = best_score >= THRESHOLD
-        matched_id = records[best_idx]["employee_id"] if success else "Unknown"
+        success = score >= THRESHOLD
+        matched_id = req.user_id if success else "Unknown"
 
-        person = {"id": matched_id, "name": matched_id, "department": "Engineering", "avatar_url": None} if success else None
+        person = {"id": matched_id, "name": matched_id, "department": "Engineering"} if success else None
         total_time = (time.time() - start_total) * 1000
 
-        entry = stats.add_entry(matched_id, best_score, total_time, success)
+        entry = stats.add_entry(matched_id, score, total_time, success)
         await manager.broadcast({"type": "NEW_ENTRY", "data": entry, "analytics": stats.get_analytics()})
 
         return {
             "success": success,
             "person": person,
-            "confidence": round(best_score, 3),
+            "confidence": round(score, 3),
             "embedding_time_ms": round(emb_time, 2),
             "search_time_ms": round(search_time, 2),
-            "total_time_ms": round(total_time, 2),
-            "attendance": {
-                "status": "checked_in" if success else "unknown",
-                "check_in_time": datetime.now().isoformat() if success else None,
-                "is_late": False,
-            },
+            "total_time_ms": round(total_time, 2)
         }
 
     except Exception as e:

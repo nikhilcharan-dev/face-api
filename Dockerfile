@@ -5,6 +5,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/venv
 
 # Build-time tools needed by some native extensions (insightface, cv2)
@@ -25,6 +26,7 @@ FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/venv \
     OMP_NUM_THREADS=1 \
     PATH="/opt/venv/bin:$PATH"

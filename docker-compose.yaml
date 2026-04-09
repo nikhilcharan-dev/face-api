@@ -8,7 +8,7 @@ services:
     image: workping/face-recognition-api:latest
     container_name: face-recognition-api
     ports:
-      - "127.0.0.1:5000:5000"
+      - "0.0.0.0:3000:5000"
     environment:
       PYTHONUNBUFFERED: "1"
       MONGODB_URI: "${MONGODB_URI}"
@@ -28,4 +28,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-

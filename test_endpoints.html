@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face API Tester v3 - Live Camera</title>
+    <style>
+        :root {
+            /* Light Mode Tokens */
+            --bg-color: #f4f7fb;
+            --surface-color: rgba(255, 255, 255, 0.7);
+            --border-color: rgba(0, 0, 0, 0.1);
+            --text-primary: #1a1f24;
+            --text-secondary: #5c6773;
+            --brand-color: #3b82f6;
+            --brand-hover: #2563eb;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
+            --glass-blur: blur(10px);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                /* Dark Mode Tokens */
+                --bg-color: #0f172a;
+                --surface-color: rgba(30, 41, 59, 0.7);
+                --border-color: rgba(255, 255, 255, 0.1);
+                --text-primary: #f8fafc;
+                --text-secondary: #94a3b8;
+                --shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 2rem;
+            align-items: center;
+        }
+
+        h1 {
+            font-weight: 800;
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            text-align: center;
+            background: linear-gradient(135deg, var(--brand-color), #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Camera Section */
+        .camera-container {
+            width: 100%;
+            max-width: 600px;
+            margin-bottom: 2rem;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            background: #000;
+            position: relative;
+        }
+
+        #camera-video {
+            width: 100%;
+            display: block;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror camera */
+        }
+
+        .camera-overlay {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 99px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            backdrop-filter: blur(4px);
+        }
+
+        .snapshot {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: white;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.1s;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .card {
+            background: var(--surface-color);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: var(--shadow);
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        input {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            color: var(--text-primary);
+            outline: none;
+            font-size: 1rem;
+        }
+
+        input:focus {
+            border-color: var(--brand-color);
+        }
+
+        button {
+            width: 100%;
+            padding: 0.875rem;
+            border: none;
+            border-radius: 8px;
+            background-color: var(--brand-color);
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        button:hover { background-color: var(--brand-hover); }
+        button:active { transform: scale(0.98); }
+        button:disabled { opacity: 0.7; cursor: not-allowed; }
+
+        .btn-detect { background-color: #8b5cf6; }
+        .btn-detect:hover { background-color: #7c3aed; }
+
+        .response-container {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            display: none;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .response-container { background: rgba(0, 0, 0, 0.3); }
+        }
+
+        .response-container h3 {
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.875rem;
+            color: var(--text-primary);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .status-success { background: var(--success-color); color: white; }
+        .status-error { background: var(--error-color); color: white; }
+        
+        /* Display last captured thumbnail below responses */
+        .captured-thumb {
+            max-width: 150px;
+            border-radius: 8px;
+            margin-top: 1rem;
+            display: none;
+            border: 2px solid var(--brand-color);
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Face API Network Tester</h1>
+
+    <!-- CAMERA STREAM -->
+    <div class="camera-container">
+        <div class="camera-overlay">🔴 LIVE</div>
+        <video id="camera-video" autoplay playsinline></video>
+        <div id="flash" class="snapshot"></div>
+    </div>
+
+    <!-- Hidden canvas for capturing frames -->
+    <canvas id="capture-canvas" style="display:none;"></canvas>
+
+    <div class="container">
+        
+        <!-- ENROLLMENT CARD -->
+        <div class="card">
+            <h2>👤 Enroll Identity</h2>
+            
+            <div class="form-group">
+                <label>Organization ID</label>
+                <input type="text" id="enroll-org" placeholder="e.g., org_hq" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Employee ID</label>
+                <input type="text" id="enroll-emp" placeholder="e.g., e_1024" required>
+            </div>
+
+            <button id="enroll-btn" onclick="submitEnroll()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                Capture & Enroll Face
+            </button>
+
+            <div class="response-container" id="enroll-response-box">
+                <h3>Response</h3>
+                <span id="enroll-status" class="status-badge"></span>
+                <pre id="enroll-response"></pre>
+                <img id="enroll-thumb" class="captured-thumb">
+            </div>
+        </div>
+
+        <!-- DETECTION CARD -->
+        <div class="card">
+            <h2>📷 Detect Face</h2>
+            
+            <div class="form-group">
+                <label>Organization ID</label>
+                <input type="text" id="detect-org" placeholder="e.g., org_hq" required>
+            </div>
+            
+            <div class="form-group">
+                <label>User/Employee ID</label>
+                <input type="text" id="detect-user" placeholder="e.g., e_1024" required>
+            </div>
+
+            <button id="detect-btn" class="btn-detect" onclick="submitDetect()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                Capture & Match Frame
+            </button>
+
+            <div class="response-container" id="detect-response-box">
+                <h3>Match Results</h3>
+                <span id="detect-status" class="status-badge"></span>
+                <pre id="detect-response"></pre>
+                <img id="detect-thumb" class="captured-thumb">
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MAIN LOGIC -->
+    <script>
+        const API_URL = "http://144.24.132.166:3000/api/v1";
+        
+        /** @type {HTMLVideoElement} */
+        const video = document.querySelector('video#camera-video');
+        /** @type {HTMLCanvasElement} */
+        const canvas = document.querySelector('canvas#capture-canvas');
+        const ctx = canvas.getContext('2d');
+        const flash = document.querySelector('div#flash');
+
+        // Startup the webcam
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1280, height: 720, facingMode: "user" },
+                    audio: false
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error("Camera access denied:", err);
+                if (window.location.protocol === 'file:') {
+                    alert("FATAL: Web Cameras do not work over 'file:///' URIs due to browser security restrictions! You must host this file on a local server (e.g. 'npx http-server' or 'python -m http.server') to use the camera.");
+                } else {
+                    alert("Failed to access webcam. Please allow camera permissions in your browser.");
+                }
+            }
+        }
+
+        // Capture a frame from the live video feed
+        function captureFrameImage() {
+            if (!video.videoWidth) {
+                throw new Error("Camera frame is empty! Please allow camera permissions or run over a local server instead of file://");
+            }
+
+            // Flash effect
+            flash.style.opacity = '1';
+            setTimeout(() => { flash.style.opacity = '0'; }, 150);
+
+            // Set canvas size to video size
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Draw video frame to canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Return BOTH raw base64 payload AND standard data URL for thumbnails
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            const base64Raw = dataUrl.split(',')[1];
+            
+            return { raw: base64Raw, full: dataUrl };
+        }
+
+        // Helper to output to response UI
+        const showResult = (prefix, statusCode, data, inputImageBlob) => {
+            const box = document.querySelector(`div#${prefix}-response-box`);
+            const status = document.querySelector(`span#${prefix}-status`);
+            const text = document.querySelector(`pre#${prefix}-response`);
+            /** @type {HTMLImageElement} */
+            const thumb = document.querySelector(`img#${prefix}-thumb`);
+            
+            box.style.display = 'block';
+            text.textContent = JSON.stringify(data, null, 2);
+            
+            status.textContent = `${statusCode}`;
+            status.className = 'status-badge';
+            
+            if (statusCode >= 200 && statusCode < 300) {
+                status.classList.add('status-success');
+                status.textContent += ' SUCCESS';
+            } else {
+                status.classList.add('status-error');
+                status.textContent += ' ERROR';
+            }
+
+            // Show exactly what frame was sent
+            if (inputImageBlob) {
+                thumb.src = inputImageBlob;
+                thumb.style.display = 'block';
+            } else {
+                thumb.style.display = 'none';
+            }
+        };
+
+        // --- Execute Enrollment ---
+        async function submitEnroll() {
+            /** @type {HTMLButtonElement} */
+            const btn = document.querySelector('button#enroll-btn');
+            /** @type {HTMLInputElement} */
+            const orgInput = document.querySelector('input#enroll-org');
+            /** @type {HTMLInputElement} */
+            const empInput = document.querySelector('input#enroll-emp');
+            
+            const orgId = orgInput.value.trim();
+            const empId = empInput.value.trim();
+
+            if (!orgId || !empId) return alert("Please fill Organization and Employee IDs.");
+
+            try {
+                btn.disabled = true; btn.textContent = "Extracting...";
+                
+                const frame = captureFrameImage();
+
+                const payload = {
+                    image_base64: frame.raw,
+                    employee_id: empId,
+                    organization_id: orgId
+                };
+
+                const res = await fetch(`${API_URL}/enroll`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                showResult('enroll', res.status, await res.json(), frame.full);
+            } catch (err) {
+                showResult('enroll', 500, { detailed_error: err.message }, null);
+            } finally {
+                btn.disabled = false; btn.innerHTML = "Capture & Enroll Face";
+            }
+        }
+
+        // --- Execute Detection ---
+        async function submitDetect() {
+            /** @type {HTMLButtonElement} */
+            const btn = document.querySelector('button#detect-btn');
+            /** @type {HTMLInputElement} */
+            const orgInput = document.querySelector('input#detect-org');
+            /** @type {HTMLInputElement} */
+            const userInput = document.querySelector('input#detect-user');
+
+            const orgId = orgInput.value.trim();
+            const userId = userInput.value.trim();
+
+            if (!orgId || !userId) return alert("Please fill Organization and User IDs.");
+
+            try {
+                btn.disabled = true; btn.textContent = "Scanning...";
+                
+                const frame = captureFrameImage();
+
+                const payload = {
+                    image_base64: frame.raw,
+                    user_id: userId,
+                    organization_id: orgId
+                };
+
+                const res = await fetch(`${API_URL}/detect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                showResult('detect', res.status, await res.json(), frame.full);
+            } catch (err) {
+                showResult('detect', 500, { detailed_error: err.message }, null);
+            } finally {
+                btn.disabled = false; btn.innerHTML = "Capture & Match Frame";
+            }
+        }
+
+        // Boot camera immediately when page loads
+        window.addEventListener('load', startCamera);
+    </script>
+</body>
+</html>
