@@ -255,16 +255,6 @@
                 <input type="text" id="enroll-emp" placeholder="e.g., e_1024" required>
             </div>
 
-            <div class="form-group">
-                <label>Employee Name (Optional)</label>
-                <input type="text" id="enroll-name" placeholder="e.g., John Doe">
-            </div>
-
-            <div class="form-group">
-                <label>Department (Optional)</label>
-                <input type="text" id="enroll-dept" placeholder="e.g., Engineering">
-            </div>
-
             <button id="enroll-btn" onclick="submitEnroll()">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                 Capture & Enroll Face
@@ -399,15 +389,9 @@
             const orgInput = document.querySelector('input#enroll-org');
             /** @type {HTMLInputElement} */
             const empInput = document.querySelector('input#enroll-emp');
-            /** @type {HTMLInputElement} */
-            const nameInput = document.querySelector('input#enroll-name');
-            /** @type {HTMLInputElement} */
-            const deptInput = document.querySelector('input#enroll-dept');
             
             const orgId = orgInput.value.trim();
             const empId = empInput.value.trim();
-            const empName = nameInput.value.trim();
-            const empDept = deptInput.value.trim();
 
             if (!orgId || !empId) return alert("Please fill Organization and Employee IDs.");
 
@@ -421,8 +405,6 @@
                     employee_id: empId,
                     organization_id: orgId
                 };
-                if (empName) payload.employee_name = empName;
-                if (empDept) payload.department = empDept;
 
                 const res = await fetch(`${API_URL}/enroll`, {
                     method: 'POST',
@@ -438,7 +420,7 @@
             }
         }
 
-        // --- Execute Detection ---
+        // --- Execute Detection (Queued / Polling) ---
         async function submitDetect() {
             /** @type {HTMLButtonElement} */
             const btn = document.querySelector('button#detect-btn');
@@ -453,9 +435,23 @@
             if (!orgId || !userId) return alert("Please fill Organization and User IDs.");
 
             try {
-                btn.disabled = true; btn.textContent = "Scanning...";
+                btn.disabled = true; 
+                btn.textContent = "Submitting...";
+                
+                // Prepare UI early to show polling progress
+                const box = document.querySelector('div#detect-response-box');
+                const detectStatus = document.querySelector('span#detect-status');
+                const text = document.querySelector('pre#detect-response');
+                const thumb = document.querySelector('img#detect-thumb');
+                
+                box.style.display = 'block';
+                detectStatus.className = 'status-badge';
+                detectStatus.textContent = 'Submitting...';
+                text.textContent = 'Waiting for ticket...';
                 
                 const frame = captureFrameImage();
+                thumb.src = frame.full;
+                thumb.style.display = 'block';
 
                 const payload = {
                     image_base64: frame.raw,
@@ -463,17 +459,64 @@
                     organization_id: orgId
                 };
 
+                // 1. Submit task
                 const res = await fetch(`${API_URL}/detect`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
+                
+                if (res.status !== 200) {
+                    showResult('detect', res.status, await res.json(), frame.full);
+                    return;
+                }
 
-                showResult('detect', res.status, await res.json(), frame.full);
+                let data = await res.json();
+                
+                // If backend does not return queue status, just show result and exit
+                if (data.status !== "queued" && data.status !== "processing") {
+                    showResult('detect', 200, data, frame.full);
+                    return;
+                }
+                
+                const ticketId = data.ticket_id;
+                let currentStatus = data.status;
+                
+                // 2. Poll for completion
+                while (currentStatus !== 'completed' && currentStatus !== 'failed') {
+                    btn.textContent = `Polling (${currentStatus})...`;
+                    if (currentStatus === 'queued') {
+                        detectStatus.textContent = `QUEUED (Pos: ${data.position || '?'})`;
+                        detectStatus.style.backgroundColor = '#8B5CF6'; 
+                        detectStatus.style.color = '#fff';
+                    } else {
+                        detectStatus.textContent = currentStatus.toUpperCase();
+                    }
+                    text.textContent = JSON.stringify(data, null, 2);
+                    
+                    // Wait 2 seconds
+                    await new Promise(r => setTimeout(r, 2000));
+                    
+                    const pollRes = await fetch(`${API_URL}/ticket/${ticketId}`);
+                    if (!pollRes.ok) {
+                        showResult('detect', pollRes.status, await pollRes.json(), frame.full);
+                        return;
+                    }
+                    data = await pollRes.json();
+                    currentStatus = data.status;
+                }
+                
+                // 3. Render final output
+                showResult('detect', 200, data, frame.full);
+
             } catch (err) {
                 showResult('detect', 500, { detailed_error: err.message }, null);
             } finally {
-                btn.disabled = false; btn.innerHTML = "Capture & Match Frame";
+                btn.disabled = false; 
+                btn.innerHTML = `
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                    Capture & Match Frame
+                `;
             }
         }
 

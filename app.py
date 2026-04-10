@@ -2,6 +2,10 @@ import json
 import numpy as np
 import base64
 import time
+import os
+import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections import deque
 from pydantic import BaseModel
@@ -12,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from embedding import get_face_embedding_from_bytes, load_face_app, is_gpu_available
 from db import get_embeddings_collection
-from cache import embedding_key, cache_get, cache_set, cache_del, CACHE_TTL
+from cache import embedding_key, cache_get, cache_set, cache_del, CACHE_TTL, _get_redis
 
 # ---------------- CONFIG ----------------
 DIM = 512
@@ -25,8 +29,6 @@ class EnrollRequest(BaseModel):
     image_base64: str
     employee_id: str
     organization_id: str
-    employee_name: Optional[str] = None
-    department: Optional[str] = None
 
 class DetectRequest(BaseModel):
     image_base64: str
@@ -104,6 +106,95 @@ print("Preloading InsightFace antelopev2 model...")
 load_face_app()
 print("InsightFace model ready")
 
+executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
+
+def do_inference(image_bytes, db_emb, threshold, req_user_id):
+    start_emb = time.time()
+    query_emb = get_face_embedding_from_bytes(image_bytes)
+    emb_time = (time.time() - start_emb) * 1000
+
+    start_search = time.time()
+    score = float(np.dot(db_emb, query_emb))
+    search_time = (time.time() - start_search) * 1000
+
+    success = score >= threshold
+    matched_id = req_user_id if success else "Unknown"
+    
+    return {
+        "success": success,
+        "score": score,
+        "matched_id": matched_id,
+        "emb_time": emb_time,
+        "search_time": search_time
+    }
+
+async def inference_worker():
+    redis = _get_redis()
+    col = get_embeddings_collection()
+    print("Inference Worker loop started!")
+    while True:
+        try:
+            item = await redis.blpop("face_tasks_queue", timeout=1)
+            if not item:
+                continue
+            
+            _, payload_str = item
+            payload = json.loads(payload_str)
+            ticket_id = payload["ticket_id"]
+            user_id = payload["user_id"]
+            org_id = payload["organization_id"]
+            
+            await redis.setex(f"ticket:{ticket_id}", 300, json.dumps({"status": "processing"}))
+            
+            start_total = time.time()
+            
+            user_doc = await col.find_one({"organization_id": org_id, "employee_id": user_id}, {"_id": 0, "embedding": 1})
+            if not user_doc:
+                result = {"success": False, "error": "User not found"}
+            else:
+                image_bytes = base64.b64decode(payload["image_base64"])
+                db_emb = np.array(user_doc["embedding"], dtype=np.float32)
+                
+                loop = asyncio.get_running_loop()
+                inf_res = await loop.run_in_executor(executor, do_inference, image_bytes, db_emb, THRESHOLD, user_id)
+                
+                success = inf_res["success"]
+                score = inf_res["score"]
+                matched_id = inf_res["matched_id"]
+                
+                total_time = (time.time() - start_total) * 1000
+                
+                entry = stats.add_entry(matched_id, score, total_time, success)
+                await manager.broadcast({"type": "NEW_ENTRY", "data": entry, "analytics": stats.get_analytics()})
+                
+                result = {
+                    "success": success,
+                    "person": {"id": matched_id, "name": matched_id, "department": "Engineering"} if success else None,
+                    "confidence": round(score, 3),
+                    "embedding_time_ms": round(inf_res["emb_time"], 2),
+                    "search_time_ms": round(inf_res["search_time"], 2),
+                    "total_time_ms": round(total_time, 2)
+                }
+
+            await redis.setex(f"ticket:{ticket_id}", 300, json.dumps({
+                "status": "completed",
+                "result": result
+            }))
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"Inference Worker Error: {e}")
+            if 'ticket_id' in locals():
+                try:
+                    await redis.setex(f"ticket:{ticket_id}", 300, json.dumps({"status": "failed", "error": str(e)}))
+                except:
+                    pass
+            await asyncio.sleep(1)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(inference_worker())
+
 # ---------------- HELPERS ----------------
 async def load_embeddings(organization_id: str) -> list:
     """Return [{employee_id, embedding}] from Redis or MongoDB."""
@@ -161,20 +252,13 @@ async def enroll(req: EnrollRequest):
         raise HTTPException(status_code=422, detail=f"Face extraction failed: {e}")
 
     col = get_embeddings_collection()
-    
-    doc = {
-        "employee_id": req.employee_id,
-        "organization_id": req.organization_id,
-        "embedding": emb.tolist(),
-    }
-    if req.employee_name:
-        doc["employee_name"] = req.employee_name
-    if req.department:
-        doc["department"] = req.department
-
     await col.update_one(
         {"employee_id": req.employee_id},
-        {"$set": doc},
+        {"$set": {
+            "employee_id": req.employee_id,
+            "organization_id": req.organization_id,
+            "embedding": emb.tolist(),
+        }},
         upsert=True,
     )
     await bust_cache(req.organization_id)
@@ -185,61 +269,35 @@ async def enroll(req: EnrollRequest):
 @app.post("/api/v1/detect")
 async def detect(req: DetectRequest):
     """
-    Verify a face against a specific enrolled user embedding.
+    Submits a face verification task to the Redis queue.
     """
-    start_total = time.time()
+    ticket_id = str(uuid.uuid4())
+    redis = _get_redis()
+    
+    payload = {
+        "ticket_id": ticket_id,
+        "image_base64": req.image_base64,
+        "user_id": req.user_id,
+        "organization_id": req.organization_id
+    }
+    
+    await redis.setex(f"ticket:{ticket_id}", 300, json.dumps({"status": "queued"}))
+    await redis.rpush("face_tasks_queue", json.dumps(payload))
+    queue_len = await redis.llen("face_tasks_queue")
+    
+    return {
+        "status": "queued",
+        "ticket_id": ticket_id,
+        "position": queue_len
+    }
 
-    col = get_embeddings_collection()
-    user_doc = await col.find_one(
-        {"organization_id": req.organization_id, "employee_id": req.user_id},
-        {"_id": 0, "embedding": 1, "employee_name": 1, "department": 1}
-    )
-
-    if not user_doc:
-        return {
-            "success": False, "person": None, "confidence": 0.0,
-            "error": "User not found"
-        }
-
-    try:
-        try:
-            image_bytes = base64.b64decode(req.image_base64)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid base64 image data")
-
-        start_emb = time.time()
-        query_emb = get_face_embedding_from_bytes(image_bytes)  # (512,) L2-normalised
-        emb_time = (time.time() - start_emb) * 1000
-
-        start_search = time.time()
-        db_emb = np.array(user_doc["embedding"], dtype=np.float32)
-        score = float(np.dot(db_emb, query_emb))
-        search_time = (time.time() - start_search) * 1000
-
-        success = score >= THRESHOLD
-        matched_id = req.user_id if success else "Unknown"
-
-        name = user_doc.get("employee_name", matched_id)
-        department = user_doc.get("department", "Unknown")
-        person = {"id": matched_id, "name": name, "department": department} if success else None
-        total_time = (time.time() - start_total) * 1000
-
-        entry = stats.add_entry(matched_id, score, total_time, success)
-        await manager.broadcast({"type": "NEW_ENTRY", "data": entry, "analytics": stats.get_analytics()})
-
-        return {
-            "success": success,
-            "person": person,
-            "confidence": round(score, 3),
-            "embedding_time_ms": round(emb_time, 2),
-            "search_time_ms": round(search_time, 2),
-            "total_time_ms": round(total_time, 2)
-        }
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/v1/ticket/{ticket_id}")
+async def get_ticket(ticket_id: str):
+    redis = _get_redis()
+    data = await redis.get(f"ticket:{ticket_id}")
+    if not data:
+        raise HTTPException(status_code=404, detail="Ticket not found or expired")
+    return json.loads(data)
 
 
 @app.delete("/api/v1/embeddings/{employee_id}")

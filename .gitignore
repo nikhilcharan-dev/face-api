@@ -7,3 +7,5 @@ venv/
 dumped/
 image_dump/
 models/
+test_img.jpg
+test_endpoints.html
