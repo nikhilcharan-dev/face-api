@@ -300,6 +300,14 @@ async def get_ticket(ticket_id: str):
     return json.loads(data)
 
 
+@app.get("/api/v1/embeddings/{employee_id}")
+async def get_embedding_status(employee_id: str):
+    """Check whether a face embedding exists for a specific employee."""
+    col = get_embeddings_collection()
+    doc = await col.find_one({"employee_id": employee_id}, {"_id": 0, "employee_id": 1, "organization_id": 1})
+    return {"registered": doc is not None}
+
+
 @app.delete("/api/v1/embeddings/{employee_id}")
 async def delete_embedding(employee_id: str):
     """Remove a face embedding from MongoDB and invalidate the org's cache."""
