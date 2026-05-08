@@ -3,6 +3,6 @@ uvicorn[standard]
 numpy
 opencv-python-headless
 insightface
-onnxruntime
+onnxruntime-gpu
 motor
 redis[hiredis]

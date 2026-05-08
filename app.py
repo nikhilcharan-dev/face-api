@@ -1,3 +1,37 @@
+"""
+WorkPing Biometric Service  (workping-biometric)
+================================================
+Face recognition microservice built on InsightFace (AntelopeV2) and FastAPI.
+
+FACE RECOGNITION PIPELINE
+--------------------------
+1. Input: base64-encoded JPEG/PNG frame from mobile camera or webcam
+2. InsightFace AntelopeV2: SCRFD (face detection) + ArcFace R100 (embedding extraction)
+3. Produces a 512-dimensional L2-normalised embedding vector
+4. Cosine similarity via numpy dot product of unit vectors against the stored embedding
+5. THRESHOLD = 0.6 — scores above this are accepted as a MATCH
+
+INFERENCE ARCHITECTURE (async + threaded)
+-----------------------------------------
+HTTP endpoints push tasks onto a Redis list (face_tasks_queue) and return a ticket ID.
+A background asyncio worker (inference_worker) pops tasks from the queue, calls
+InsightFace in a ThreadPoolExecutor (keeps the event loop unblocked), and writes
+the result back into Redis with a 5-minute TTL. The caller polls /result/<ticket_id>.
+
+This decouples HTTP latency from GPU inference latency and allows horizontal scaling
+by adding more worker replicas that share the same Redis queue.
+
+CACHING LAYERS
+--------------
+- Redis embedding cache: embedding_key(org, emp) -> serialized numpy float32 array
+  TTL = CACHE_TTL. Avoids a MongoDB read on every detection for active users.
+- Redis ticket cache: ticket:<uuid> -> JSON result, TTL = 300s.
+  Allows async polling without blocking the HTTP thread during inference.
+
+NOTE: FAISS IndexFlatIP is used for org-level bulk search (/faiss/* routes).
+      Single-user verification uses direct cosine similarity (faster for 1:1 match).
+"""
+
 import json
 import numpy as np
 import base64
@@ -19,8 +53,8 @@ from db import get_embeddings_collection
 from cache import embedding_key, cache_get, cache_set, cache_del, CACHE_TTL, _get_redis
 
 # ---------------- CONFIG ----------------
-DIM = 512
-THRESHOLD = 0.6
+DIM = 512          # ArcFace R100 produces 512-dim embeddings
+THRESHOLD = 0.6    # Cosine similarity cutoff; tune per deployment (higher = stricter)
 START_TIME = time.time()
 HISTORY_LIMIT = 50
 
@@ -106,7 +140,12 @@ print("Preloading InsightFace antelopev2 model...")
 load_face_app()
 print("InsightFace model ready")
 
-executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
+# 0 → use all CPU cores (keeps every GPU CUDA stream fed)
+_cfg_workers = int(os.environ.get("INFERENCE_WORKERS", "0"))
+INFERENCE_WORKERS = _cfg_workers if _cfg_workers > 0 else (os.cpu_count() or 8)
+print(f"Inference workers: {INFERENCE_WORKERS}")
+
+executor = ThreadPoolExecutor(max_workers=INFERENCE_WORKERS)
 
 def do_inference(image_bytes, db_emb, threshold, req_user_id):
     start_emb = time.time()
@@ -148,12 +187,24 @@ async def inference_worker():
             
             start_total = time.time()
             
-            user_doc = await col.find_one({"organization_id": org_id, "employee_id": user_id}, {"_id": 0, "embedding": 1})
-            if not user_doc:
+            user_emb_key = f"face:user_emb:{user_id}"
+            cached_emb = await redis.get(user_emb_key)
+            if cached_emb:
+                db_emb = np.frombuffer(base64.b64decode(cached_emb), dtype=np.float32)
+                user_found = True
+            else:
+                user_doc = await col.find_one({"organization_id": org_id, "employee_id": user_id}, {"_id": 0, "embedding": 1})
+                if user_doc:
+                    db_emb = np.array(user_doc["embedding"], dtype=np.float32)
+                    await redis.setex(user_emb_key, 300, base64.b64encode(db_emb.tobytes()).decode())
+                    user_found = True
+                else:
+                    user_found = False
+
+            if not user_found:
                 result = {"success": False, "error": "User not found"}
             else:
                 image_bytes = base64.b64decode(payload["image_base64"])
-                db_emb = np.array(user_doc["embedding"], dtype=np.float32)
                 
                 loop = asyncio.get_running_loop()
                 inf_res = await loop.run_in_executor(executor, do_inference, image_bytes, db_emb, THRESHOLD, user_id)
@@ -193,7 +244,8 @@ async def inference_worker():
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(inference_worker())
+    for _ in range(INFERENCE_WORKERS):
+        asyncio.create_task(inference_worker())
 
 # ---------------- HELPERS ----------------
 async def load_embeddings(organization_id: str) -> list:
@@ -214,8 +266,10 @@ async def load_embeddings(organization_id: str) -> list:
     return records
 
 
-async def bust_cache(organization_id: str):
+async def bust_cache(organization_id: str, employee_id: str | None = None):
     await cache_del(embedding_key(organization_id))
+    if employee_id:
+        await cache_del(f"face:user_emb:{employee_id}")
 
 
 # ---------------- ROUTES ----------------
@@ -261,7 +315,7 @@ async def enroll(req: EnrollRequest):
         }},
         upsert=True,
     )
-    await bust_cache(req.organization_id)
+    await bust_cache(req.organization_id, req.employee_id)
 
     return {"success": True, "employee_id": req.employee_id}
 
@@ -314,7 +368,7 @@ async def delete_embedding(employee_id: str):
     col = get_embeddings_collection()
     doc = await col.find_one_and_delete({"employee_id": employee_id})
     if doc:
-        await bust_cache(doc["organization_id"])
+        await bust_cache(doc["organization_id"], employee_id)
     return {"success": True, "deleted_employee_id": employee_id}
 
 

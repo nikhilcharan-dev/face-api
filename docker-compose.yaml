@@ -1,4 +1,4 @@
-version: "3.3"
+version: "3.8"
 
 services:
   face-recognition-api:
@@ -16,13 +16,20 @@ services:
       REDIS_HOST: "${REDIS_HOST}"
       REDIS_PORT: "${REDIS_PORT}"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      # Number of parallel inference workers — defaults to all CPU cores.
+      # Tune down if GPU memory pressure is observed.
+      INFERENCE_WORKERS: "${INFERENCE_WORKERS:-0}"
     volumes:
-      # Mounts the local models directory straight from the repo so no download is required!
       - ./models:/app/models
-      # Drop images here for bulk seeding (seed_bulk.py reads from /app/image_dump)
       - ./image_dump:/app/image_dump
     restart: unless-stopped
-
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     logging:
       driver: json-file
       options:

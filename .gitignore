@@ -1,11 +1,46 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
 venv/
 .venv/
+env/
+ENV/
+
+# Environment — never commit real credentials
 .env
+.env.local
+.env.*.local
+
+# Model files — large binaries, manage via Docker volumes or external storage
+models/
+models.zip
+*.onnx
+*.pt
+*.pth
+*.bin
+
+# Runtime generated
 dumped/
 image_dump/
-models/
+*.log
+logs/
+
+# Test artefacts — not part of the product
 test_img.jpg
+test_img_*.jpg
 test_endpoints.html
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
