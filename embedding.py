@@ -77,8 +77,9 @@ def _build_providers():
         ]
 
     if "CUDAExecutionProvider" in available:
+        cuda_opts = {"cudnn_conv_algo_search": "DEFAULT"}
         print("Provider: CUDA + CPU")
-        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        return [("CUDAExecutionProvider", cuda_opts), "CPUExecutionProvider"]
 
     print("Provider: CPU only")
     return ["CPUExecutionProvider"]
