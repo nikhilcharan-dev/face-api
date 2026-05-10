@@ -13,6 +13,20 @@ fi
 
 mkdir -p logs models/trt_cache
 
+# ── Resolve CUDA/cuDNN libraries ──────────────────────────────────────────────
+# onnxruntime-gpu bundles its own cuDNN/CUDA libs inside the venv.
+# Add them to LD_LIBRARY_PATH so the TRT provider can find libcudnn.so.9.
+ORT_LIBS="$(python -c "import onnxruntime, os; print(os.path.dirname(onnxruntime.__file__))")/capi"
+if [ -d "$ORT_LIBS" ]; then
+    export LD_LIBRARY_PATH="${ORT_LIBS}:${LD_LIBRARY_PATH:-}"
+    echo "[start] Added ort libs to LD_LIBRARY_PATH: $ORT_LIBS"
+fi
+
+# Also add system TRT libs if present
+if [ -d "/usr/lib/x86_64-linux-gnu" ]; then
+    export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+fi
+
 # Pick the first MIG UUID
 MIG_UUID=$(nvidia-smi -L 2>/dev/null | grep -oP 'MIG-[0-9a-f\-]+' | head -1 || true)
 
