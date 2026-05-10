@@ -12,15 +12,41 @@ _app = None             # singleton
 _active_provider = "cpu"  # set after load_face_app() succeeds
 
 def _trt_libs_present() -> bool:
-    """Check libnvinfer is actually loadable — not just listed in ort providers."""
-    import ctypes
+    """
+    Check libnvinfer is loadable AND compatible with the running CUDA driver.
+    A mismatch (e.g. TRT built for CUDA 13.2 on a CUDA 12.8 driver) causes
+    a segfault inside TRT's createInferRuntime — we probe with a subprocess
+    so a crash there doesn't take down the main process.
+    """
+    import ctypes, subprocess, sys
+    # Quick lib-load check first
+    found = False
     for lib in ("libnvinfer.so.10", "libnvinfer.so.8"):
         try:
             ctypes.CDLL(lib)
-            return True
+            found = True
+            break
         except OSError:
             pass
-    return False
+    if not found:
+        return False
+
+    # Validate TRT can actually init CUDA without crashing
+    probe = (
+        "import onnxruntime as ort; "
+        "s = ort.InferenceSession.__new__(ort.InferenceSession); "
+        "print('ok')"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            timeout=10,
+            capture_output=True,
+            env={**os.environ, "ORT_TENSORRT_VALIDATION": "1"},
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 def _build_providers():

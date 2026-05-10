@@ -38,7 +38,12 @@ else
     CUDA_DEVICE="$MIG_UUID"
 fi
 
-echo "[start] INFERENCE_WORKERS=${INFERENCE_WORKERS:-4}  USE_TENSORRT=${USE_TENSORRT:-1}"
+# TRT 10.x installed via apt is built for CUDA 13.2 — incompatible with CUDA 12.8.
+# Keep USE_TENSORRT=0 until a cuda-12 build of TRT is installed.
+# Override with: USE_TENSORRT=1 ./start.sh
+USE_TENSORRT="${USE_TENSORRT:-0}"
+
+echo "[start] INFERENCE_WORKERS=${INFERENCE_WORKERS:-4}  USE_TENSORRT=${USE_TENSORRT}"
 echo "[start] Starting uvicorn on 0.0.0.0:5000 ..."
 
 CUDA_VISIBLE_DEVICES="$CUDA_DEVICE" \
