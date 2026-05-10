@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 import onnxruntime as ort
@@ -5,33 +6,59 @@ from insightface.app import FaceAnalysis
 
 _app = None  # singleton
 
+def _build_providers():
+    """
+    Return ordered provider list: TensorRT → CUDA → CPU.
+
+    TensorRT compiles the ONNX graph for the exact GPU on first run (slow,
+    ~2–5 min) then caches the engine — subsequent starts are instant.
+    Disable with USE_TENSORRT=0 if you need faster restarts during dev.
+    """
+    available = ort.get_available_providers()
+    use_trt   = os.environ.get("USE_TENSORRT", "1") != "0"
+
+    if "TensorrtExecutionProvider" in available and use_trt:
+        trt_opts = {
+            "trt_engine_cache_enable":    True,
+            "trt_engine_cache_path":      "/app/models/trt_cache",
+            "trt_fp16_enable":            True,   # B200 has fast FP16 tensor cores
+            "trt_max_workspace_size":     4 * 1024 ** 3,  # 4 GB per session
+        }
+        print("TensorRT + CUDA + CPU providers active (FP16 on)")
+        return [
+            ("TensorrtExecutionProvider", trt_opts),
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+
+    if "CUDAExecutionProvider" in available:
+        print("CUDA + CPU providers active")
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    print("CPU-only provider active (no GPU detected)")
+    return ["CPUExecutionProvider"]
+
+
 def is_gpu_available():
-    """Check if CUDAExecutionProvider is available in ONNX Runtime."""
     return "CUDAExecutionProvider" in ort.get_available_providers()
+
 
 def load_face_app():
     global _app
     if _app is None:
-        providers = ["CPUExecutionProvider"]
-        if is_gpu_available():
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            print("🚀 GPU detected! Using CUDAExecutionProvider")
-        else:
-            print("🔄 Using CPUExecutionProvider")
-
-        print("🔄 Loading InsightFace antelopev2 model (local, no download)...")
+        providers = _build_providers()
+        print("Loading InsightFace antelopev2 model (local, no download)...")
 
         _app = FaceAnalysis(
             name="antelopev2",
             root="/app",
-            providers=providers
+            providers=providers,
         )
 
-        # ctx_id=0 for GPU, -1 for CPU
         ctx_id = 0 if is_gpu_available() else -1
         _app.prepare(ctx_id=ctx_id, det_size=(640, 640))
 
-        print(f"✅ InsightFace antelopev2 loaded (GPU: {is_gpu_available()})")
+        print(f"InsightFace antelopev2 ready  gpu={is_gpu_available()}  trt={'TensorrtExecutionProvider' in ort.get_available_providers()}")
     return _app
 
 
