@@ -48,7 +48,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from embedding import get_face_embedding_from_bytes, load_face_app, is_gpu_available
+from embedding import get_face_embedding_from_bytes, load_face_app, is_gpu_available, _active_provider
 from db import get_embeddings_collection
 from cache import embedding_key, cache_get, cache_set, cache_del, CACHE_TTL, _get_redis
 
@@ -284,6 +284,7 @@ async def health():
     return {
         "status": "ok",
         "gpu_available": is_gpu_available(),
+        "inference_provider": _active_provider,
         "uptime_seconds": int(time.time() - START_TIME),
         "avg_latency_ms": stats.get_analytics()["avg_latency"],
     }

@@ -8,20 +8,34 @@ from insightface.app import FaceAnalysis
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 TRT_CACHE = os.path.join(APP_ROOT, "models", "trt_cache")
 
-_app = None  # singleton
+_app = None             # singleton
+_active_provider = "cpu"  # set after load_face_app() succeeds
+
+def _trt_libs_present() -> bool:
+    """Check libnvinfer is actually loadable — not just listed in ort providers."""
+    import ctypes
+    for lib in ("libnvinfer.so.10", "libnvinfer.so.8"):
+        try:
+            ctypes.CDLL(lib)
+            return True
+        except OSError:
+            pass
+    return False
+
 
 def _build_providers():
     """
     Return ordered provider list: TensorRT → CUDA → CPU.
-
-    TensorRT compiles the ONNX graph for the exact GPU on first run (slow,
-    ~2–5 min) then caches the engine — subsequent starts are instant.
-    Disable with USE_TENSORRT=0 if you need faster restarts during dev.
+    TRT is only included when libnvinfer is actually present on the system.
     """
     available = ort.get_available_providers()
-    use_trt   = os.environ.get("USE_TENSORRT", "1") != "0"
+    use_trt   = (
+        os.environ.get("USE_TENSORRT", "1") != "0"
+        and "TensorrtExecutionProvider" in available
+        and _trt_libs_present()
+    )
 
-    if "TensorrtExecutionProvider" in available and use_trt:
+    if use_trt:
         os.makedirs(TRT_CACHE, exist_ok=True)
         trt_opts = {
             "trt_engine_cache_enable": True,
@@ -29,7 +43,7 @@ def _build_providers():
             "trt_fp16_enable":         True,
             "trt_max_workspace_size":  4 * 1024 ** 3,
         }
-        print("TensorRT + CUDA + CPU providers active (FP16 on)")
+        print("Provider: TensorRT + CUDA + CPU  (FP16 on)")
         return [
             ("TensorrtExecutionProvider", trt_opts),
             "CUDAExecutionProvider",
@@ -37,19 +51,20 @@ def _build_providers():
         ]
 
     if "CUDAExecutionProvider" in available:
-        print("CUDA + CPU providers active")
+        print("Provider: CUDA + CPU")
         return ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
-    print("CPU-only provider active (no GPU detected)")
+    print("Provider: CPU only")
     return ["CPUExecutionProvider"]
 
 
-def is_gpu_available():
-    return "CUDAExecutionProvider" in ort.get_available_providers()
+def is_gpu_available() -> bool:
+    """True only when models actually loaded onto GPU (not just ort provider list)."""
+    return _active_provider in ("cuda", "tensorrt")
 
 
 def load_face_app():
-    global _app
+    global _app, _active_provider
     if _app is None:
         providers = _build_providers()
         print("Loading InsightFace antelopev2 model (local, no download)...")
@@ -60,10 +75,22 @@ def load_face_app():
             providers=providers,
         )
 
-        ctx_id = 0 if is_gpu_available() else -1
-        _app.prepare(ctx_id=ctx_id, det_size=(640, 640))
+        # ctx_id=0 → GPU, -1 → CPU
+        available = ort.get_available_providers()
+        on_gpu = "CUDAExecutionProvider" in available
+        _app.prepare(ctx_id=0 if on_gpu else -1, det_size=(640, 640))
 
-        print(f"InsightFace antelopev2 ready  gpu={is_gpu_available()}  trt={'TensorrtExecutionProvider' in ort.get_available_providers()}")
+        # Detect which provider the first model actually loaded with
+        first_session = next(iter(_app.models.values())).session
+        loaded_providers = [p.lower() for p in first_session.get_providers()]
+        if "tensorrtexecutionprovider" in loaded_providers:
+            _active_provider = "tensorrt"
+        elif "cudaexecutionprovider" in loaded_providers:
+            _active_provider = "cuda"
+        else:
+            _active_provider = "cpu"
+
+        print(f"InsightFace antelopev2 ready  provider={_active_provider}")
     return _app
 
 
