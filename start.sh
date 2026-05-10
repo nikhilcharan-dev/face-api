@@ -13,47 +13,23 @@ fi
 
 mkdir -p logs models/trt_cache
 
-# ── Resolve CUDA/cuDNN libraries ──────────────────────────────────────────────
-# onnxruntime-gpu bundles its own CUDA 12 cuDNN inside the venv/capi dir.
-# Put it FIRST so it wins over any system-installed cuDNN (e.g. the CUDA 13.2
-# build dropped by `apt install tensorrt`).
-ORT_LIBS="$(python -c "import onnxruntime, os; print(os.path.dirname(onnxruntime.__file__))")/capi"
-if [ -d "$ORT_LIBS" ]; then
-    export LD_LIBRARY_PATH="${ORT_LIBS}:${LD_LIBRARY_PATH:-}"
-    echo "[start] ORT capi libs: $ORT_LIBS"
-fi
-
-# Only add system TRT path when TRT is actually enabled — the apt-installed
-# cuDNN in /usr/lib/x86_64-linux-gnu is built for CUDA 13.2 and will corrupt
-# cuDNN init when CUDA 12.8 is the runtime.
-_USE_TRT="${USE_TENSORRT:-0}"
-if [ "$_USE_TRT" = "1" ] && [ -d "/usr/lib/x86_64-linux-gnu" ]; then
-    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/lib/x86_64-linux-gnu"
-    echo "[start] TRT enabled — added system libs to LD_LIBRARY_PATH"
-fi
-
 # Pick the first MIG UUID
 MIG_UUID=$(nvidia-smi -L 2>/dev/null | grep -oP 'MIG-[0-9a-f\-]+' | head -1 || true)
 
 if [ -z "$MIG_UUID" ]; then
-    echo "[start] No MIG instance found — falling back to full GPU / CPU"
+    echo "[start] No MIG instance found — using full GPU / CPU fallback"
     CUDA_DEVICE="0"
 else
     echo "[start] Using MIG slice: $MIG_UUID"
     CUDA_DEVICE="$MIG_UUID"
 fi
 
-# TRT 10.x installed via apt is built for CUDA 13.2 — incompatible with CUDA 12.8.
-# Keep USE_TENSORRT=0 until a cuda-12 build of TRT is installed.
-# Override with: USE_TENSORRT=1 ./start.sh
-USE_TENSORRT="${USE_TENSORRT:-0}"
-
-echo "[start] INFERENCE_WORKERS=${INFERENCE_WORKERS:-4}  USE_TENSORRT=${USE_TENSORRT}"
+echo "[start] INFERENCE_WORKERS=${INFERENCE_WORKERS:-4}  USE_TENSORRT=${USE_TENSORRT:-0}"
 echo "[start] Starting uvicorn on 0.0.0.0:5000 ..."
 
 CUDA_VISIBLE_DEVICES="$CUDA_DEVICE" \
 INFERENCE_WORKERS="${INFERENCE_WORKERS:-4}" \
-USE_TENSORRT="${USE_TENSORRT:-1}" \
+USE_TENSORRT="${USE_TENSORRT:-0}" \
 OMP_NUM_THREADS=1 \
 exec uvicorn app:app \
     --host 0.0.0.0 \
