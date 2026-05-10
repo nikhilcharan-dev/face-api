@@ -14,17 +14,22 @@ fi
 mkdir -p logs models/trt_cache
 
 # ── Resolve CUDA/cuDNN libraries ──────────────────────────────────────────────
-# onnxruntime-gpu bundles its own cuDNN/CUDA libs inside the venv.
-# Add them to LD_LIBRARY_PATH so the TRT provider can find libcudnn.so.9.
+# onnxruntime-gpu bundles its own CUDA 12 cuDNN inside the venv/capi dir.
+# Put it FIRST so it wins over any system-installed cuDNN (e.g. the CUDA 13.2
+# build dropped by `apt install tensorrt`).
 ORT_LIBS="$(python -c "import onnxruntime, os; print(os.path.dirname(onnxruntime.__file__))")/capi"
 if [ -d "$ORT_LIBS" ]; then
     export LD_LIBRARY_PATH="${ORT_LIBS}:${LD_LIBRARY_PATH:-}"
-    echo "[start] Added ort libs to LD_LIBRARY_PATH: $ORT_LIBS"
+    echo "[start] ORT capi libs: $ORT_LIBS"
 fi
 
-# Also add system TRT libs if present
-if [ -d "/usr/lib/x86_64-linux-gnu" ]; then
-    export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+# Only add system TRT path when TRT is actually enabled — the apt-installed
+# cuDNN in /usr/lib/x86_64-linux-gnu is built for CUDA 13.2 and will corrupt
+# cuDNN init when CUDA 12.8 is the runtime.
+_USE_TRT="${USE_TENSORRT:-0}"
+if [ "$_USE_TRT" = "1" ] && [ -d "/usr/lib/x86_64-linux-gnu" ]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/lib/x86_64-linux-gnu"
+    echo "[start] TRT enabled — added system libs to LD_LIBRARY_PATH"
 fi
 
 # Pick the first MIG UUID
