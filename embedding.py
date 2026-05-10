@@ -4,6 +4,10 @@ import numpy as np
 import onnxruntime as ort
 from insightface.app import FaceAnalysis
 
+# Directory that contains the models/ folder — works for both Docker and venv
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+TRT_CACHE = os.path.join(APP_ROOT, "models", "trt_cache")
+
 _app = None  # singleton
 
 def _build_providers():
@@ -18,11 +22,12 @@ def _build_providers():
     use_trt   = os.environ.get("USE_TENSORRT", "1") != "0"
 
     if "TensorrtExecutionProvider" in available and use_trt:
+        os.makedirs(TRT_CACHE, exist_ok=True)
         trt_opts = {
-            "trt_engine_cache_enable":    True,
-            "trt_engine_cache_path":      "/app/models/trt_cache",
-            "trt_fp16_enable":            True,   # B200 has fast FP16 tensor cores
-            "trt_max_workspace_size":     4 * 1024 ** 3,  # 4 GB per session
+            "trt_engine_cache_enable": True,
+            "trt_engine_cache_path":   TRT_CACHE,
+            "trt_fp16_enable":         True,
+            "trt_max_workspace_size":  4 * 1024 ** 3,
         }
         print("TensorRT + CUDA + CPU providers active (FP16 on)")
         return [
@@ -51,7 +56,7 @@ def load_face_app():
 
         _app = FaceAnalysis(
             name="antelopev2",
-            root="/app",
+            root=APP_ROOT,
             providers=providers,
         )
 
